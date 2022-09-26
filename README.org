@@ -1,0 +1,6 @@
+* writer
+  Accumulate an output alongside a result.
+  Loose approximation of a Writer monad.
+
+** License
+   This project is licensed under the MIT License.
