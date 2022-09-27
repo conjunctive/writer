@@ -10,7 +10,15 @@
   `writer-rf` is a reducing function for binding one `writer` with another.
   `bi-writer-rf` is a reducing function for binding one `writer` with another associatively.
   `bind-writer-rf` is a higher-order reducing function for binding one `writer` with another.
-  `trace-rf` is a higher-order utility reducing function for tracing reduction steps.")
+  `trace-rf` is a higher-order utility reducing function for tracing reduction steps.
+
+  `transcribe` is a transducer context that constructs a `writer` through parameterizing xforms with `tell!`.
+
+  `pure` is a function that constructs a `writer` from a result value.
+  `purely` is a higher-order function that applies a function over the result of a `writer`.
+
+  `bind` is a transducer that applies a function over the result of a `writer` input,
+  expecting the function to accept a result value and return a new `writer` instance.")
 
 (defprotocol Writer
   "Accumulate an output alongside a result."
@@ -54,22 +62,34 @@ acting as a point of resolution for determining a new result."))
        (let [result# (do ~@body)]
          (->writer result# (persistent! output#))))))
 
+(defn pure
+  "Construct writer from `result`."
+  {:inline (fn [result] `(->writer ~result []))}
+  [result]
+  (->writer result []))
+
+(defn purely
+  "Apply a function `f` over result of `writer`."
+  [f]
+  (fn [w]
+    (bind-writer w (pure (f (:result w))))))
+
 (defn writer-rf
   "Reducing function over writer.
   Associative over output, bind determines result."
-  ([] (->writer nil []))
+  ([] (pure nil))
   ([w] (run-writer w))
   ([w1 w2] (bind-writer w1 w2)))
 
 (defn bind-writer-rf
   "Higher-order reducing function over writer.
   Provided reducing function `rf` determines result.
-  Zero-arity call to `rf` produces the initial result.
+  Zero-arity call to `rf` constructs the initial result.
   Two-arity call to `rf` resolves the accumulated and returned result.
   Output is associative."
   [rf]
   (fn binding-rf
-    ([] (->writer (rf) []))
+    ([] (pure (rf)))
     ([w] (run-writer w))
     ([w1 w2] (bind-writer w1 w2 rf))))
 
@@ -102,6 +122,29 @@ acting as a point of resolution for determining a new result."))
          (tell! {:rf/arity 2, :rf/value v, :rf/args [acc x]})
          v)))))
 
+(defn bind [f]
+  (fn [rf]
+    (fn
+      ([] (rf))
+      ([result] (rf result))
+      ([result w]
+       (rf (assoc result :output (into (exec-writer result) (exec-writer w)))
+           (f (:result w)))))))
+
+(defn transcribe
+  "Variation of `transduce` that builds a `writer`.
+  The `xform` argument is parameterized with a tell! function
+  that accumulates output when called."
+  ([tell->xform f coll]
+   (transcribe tell->xform f (f) coll))
+  ([tell->xform f init coll]
+   (as-writer tell!
+     (let [f ((tell->xform tell!) f)
+           ret (if (instance? clojure.lang.IReduceInit coll)
+                 (.reduce ^clojure.lang.IReduceInit coll f init)
+                 (clojure.core.protocols/coll-reduce coll f init))]
+       (f ret)))))
+
 (comment
   ;; With `tell!` we can accumulate output alongside a result.
 
@@ -122,7 +165,7 @@ acting as a point of resolution for determining a new result."))
 
   ;; The following example demonstrates what basic interactions
   ;; between a transducer and `Writer` look like.
-  ;; Specifically, when your "step" function produces a `writer`,
+  ;; Specifically, when your "step" function returns a `writer`,
   ;; and reducing functions are aware of that `writer` context.
 
   ;; Define a "step" function that returns the input number `n`,
@@ -205,6 +248,109 @@ acting as a point of resolution for determining a new result."))
      :value [10 [:odd :even :odd :even]],
      :args [{:result 10, :output [:odd :even :odd :even]}]}]]
 
+  ,)
+
+(comment
+  ;; Run `tell-even-or-odd` twice, producing double the output.
+  (transduce (comp (map tell-even-or-odd)
+                   (bind tell-even-or-odd))
+             bi-writer-rf
+             (range 1 10))
+  ;; =>
+  [[1 2 3 4 5 6 7 8 9]
+   [:odd  :odd
+    :even :even
+    :odd  :odd
+    :even :even
+    :odd  :odd
+    :even :even
+    :odd  :odd
+    :even :even
+    :odd  :odd]]
+
+  ;; Run `tell-even-or-odd` thrice, producing triple the output.
+  ;; Sum the result.
+  (transduce (comp (map tell-even-or-odd)
+                   (bind tell-even-or-odd)
+                   (bind tell-even-or-odd))
+             (bind-writer-rf +)
+             (range 1 10))
+  ;; =>
+  [45
+   [:odd  :odd  :odd
+    :even :even :even
+    :odd  :odd  :odd
+    :even :even :even
+    :odd  :odd  :odd
+    :even :even :even
+    :odd  :odd  :odd
+    :even :even :even
+    :odd  :odd  :odd]]
+
+  ;; Run `tell-even-or-odd`, increment the result,
+  ;; then run `tell-even-or-odd` again.
+  ;; Accumulate each intermediary result.
+  ;; Either of the following expressions will do.
+  (transduce (comp (map tell-even-or-odd)
+                   (bind (comp pure inc))
+                   (bind tell-even-or-odd))
+             bi-writer-rf
+             (range 1 10))
+  (transduce (comp (map tell-even-or-odd)
+                   (map (purely inc))
+                   (bind tell-even-or-odd))
+             (trace-rf bi-writer-rf)
+             (range 1 10))
+  ;; =>
+  [[2 3 4 5 6 7 8 9 10]
+   [:odd  :even
+    :even :odd
+    :odd  :even
+    :even :odd
+    :odd  :even
+    :even :odd
+    :odd  :even
+    :even :odd
+    :odd  :even]]
+
+  ,)
+
+(comment
+  ;; Rather than having each xform construct writers independently,
+  ;; you may also leverage a transducer context that provides access
+  ;; to a single `tell!` function. This reduces overall allocations,
+  ;; with the caveat of your xform being parameterized.
+  (transcribe (fn [tell!]
+                (comp (map (fn tell-even-or-odd [n]
+                             (if (odd? n)
+                               (tell! :odd)
+                               (tell! :even))
+                             n))
+                      (map inc)))
+              +
+              (range 1 5))
+  ;; =>
+  {:result 14, :output [:odd :even :odd :even]}
+
+  (transcribe (fn [tell!]
+                (comp (map (fn tell-even-or-odd [n]
+                             (if (odd? n)
+                               (tell! :odd)
+                               (tell! :even))
+                             n))
+                      (map inc)
+                      (filter even?)
+                      (map (fn tell-even [n]
+                             (tell! :even)
+                             n))))
+              +
+              (range 1 5))
+  ;; =>
+  {:result 6, :output [:odd :even :even :odd :even :even]}
+
+  ,)
+
+(comment
   ;; How did `+` sum together the values?
   (transduce (map #(* 10 %))
              (trace-rf +)
@@ -217,6 +363,7 @@ acting as a point of resolution for determining a new result."))
     {:arity 2, :value 60, :args [30 30]}
     {:arity 2, :value 100, :args [60 40]}
     {:arity 1, :value 100, :args [100]}]]
+
   ,)
 
 ;; Local Variables:

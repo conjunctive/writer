@@ -1,0 +1,21 @@
+(use-modules
+  (guix packages)
+  ((guix licenses) #:prefix license:)
+  (guix build-system clojure)
+  (gnu packages)
+  (gnu packages base)
+  (gnu packages compression)
+  (gnu packages clojure)
+  (gnu packages java))
+
+(package
+  (name "clojure-writer")
+  (version "0.0.2")
+  (source #f)
+  (build-system clojure-build-system)
+  (arguments `(#:jdk ,openjdk17))
+  (native-inputs (list clojure-tools unzip gnu-make))
+  (synopsis "Accumulate an output alongside a result")
+  (description "Accumulate an output alongside a result")
+  (home-page "https://github.com/conjunctive/writer")
+  (license license:expat))
