@@ -48,7 +48,7 @@ acting as a point of resolution for determining a new result."))
   Calls to the `tell!` binding within `body` accumulate output."
   [tell! & body]
   `(let [output# (transient [])]
-     (letfn [(~tell! [x#] (conj! output# x#))]
+     (letfn [(~tell! [x#] (conj! output# x#) nil)]
        (let [result# (do ~@body)]
          (->writer result# (persistent! output#))))))
 
@@ -58,7 +58,7 @@ acting as a point of resolution for determining a new result."))
   Effectively (bind-writer writer (as-writer ...))"
   [writer tell! & body]
   `(let [output# (transient (vec (exec-writer ~writer)))]
-     (letfn [(~tell! [x#] (conj! output# x#))]
+     (letfn [(~tell! [x#] (conj! output# x#) nil)]
        (let [result# (do ~@body)]
          (->writer result# (persistent! output#))))))
 
