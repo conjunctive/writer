@@ -1,0 +1,2 @@
+{:hooks {:macroexpand {writer.core/as-writer writer.core/as-writer
+                       writer.core/with-writer writer.core/with-writer}}}

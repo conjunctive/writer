@@ -10,7 +10,7 @@
 
 (package
   (name "clojure-writer")
-  (version "0.0.3")
+  (version "0.0.4")
   (source #f)
   (build-system clojure-build-system)
   (arguments `(#:jdk ,openjdk17))
